@@ -1,23 +1,19 @@
 import os
 import PyPDF2
 import docx
-import textract
 from collections import Counter
 from PyQt5 import QtCore, QtGui, QtWidgets
-from multiprocessing import Pool, Manager
 import sys
-
+import textract
+from pdfminer.high_level import extract_text
+import numpy as np
+from multiprocessing import Pool, Manager
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
-        # 设置主窗口对象
         MainWindow.setObjectName("MainWindow")
         MainWindow.resize(500, 500)
-
-        # 创建中心窗口
         self.centralwidget = QtWidgets.QWidget(MainWindow)
         self.centralwidget.setObjectName("centralwidget")
-
-        # 创建各种控件
         self.label = QtWidgets.QLabel(self.centralwidget)
         self.label.setGeometry(QtCore.QRect(20, 20, 81, 21))
         self.label.setObjectName("label")
@@ -55,153 +51,127 @@ class Ui_MainWindow(object):
         self.pushButton4.setGeometry(QtCore.QRect(380, 140, 91, 21))
         self.pushButton4.setObjectName("pushButton4")
         self.textBrowser = QtWidgets.QTextBrowser(self.centralwidget)
-        self.textBrowser.setGeometry(QtCore.QRect(20, 190, 451, 271))
+        self.textBrowser.setGeometry(QtCore.QRect(20, 200, 451, 251))
         self.textBrowser.setObjectName("textBrowser")
-        self.pushButton = QtWidgets.QPushButton(self.centralwidget)
-        self.pushButton.setGeometry(QtCore.QRect(20, 470, 91, 21))
-        self.pushButton.setObjectName("pushButton")
-        self.pushButton_2 = QtWidgets.QPushButton(self.centralwidget)
-        self.pushButton_2.setGeometry(QtCore.QRect(380, 470, 91, 21))
-        self.pushButton_2.setObjectName("pushButton_2")
+        self.pushButton5 = QtWidgets.QPushButton(self.centralwidget)
+        self.pushButton5.setGeometry(QtCore.QRect(200, 170, 91, 21))
+        self.pushButton5.setObjectName("pushButton5")
+        MainWindow.setCentralWidget(self.centralwidget)
+
+        self.retranslateUi(MainWindow)
+        self.file_paths = [None] * 4  # 用于存储用户选择的文件路径
+        self.block_size = 1024 * 1024  # 每个文件块的大小，单位为字节
+        self.total_chars = {}  # 用于存储每个文件的总字符数
+        self.pushButton1.clicked.connect(self.get_file_path)
+        self.pushButton2.clicked.connect(self.get_file_path)
+        self.pushButton3.clicked.connect(self.get_file_path)
+        self.pushButton4.clicked.connect(self.get_file_path)
+        self.pushButton5.clicked.connect(self.compute_and_display_distance)
 
 
-        # 设置控件的默认值
-        self.label.setText("文件1：")
-        self.label_2.setText("文件2：")
-        self.label_3.setText("文件3：")
-        self.label_4.setText("文件4：")
-        self.pushButton1.setText("选择文件")
-        self.pushButton2.setText("选择文件")
-       
-    def load_file1(self):
-        """
-        加载文件1的按钮点击事件。
-        """
-        filepath, _ = QtWidgets.QFileDialog.getOpenFileName(None, "选择文件", "", "PDF Files (*.pdf);;Word Files (*.docx);;Text Files (*.txt)")
-        self.lineEdit1.setText(filepath)
+    def retranslateUi(self, MainWindow):
+        _translate = QtCore.QCoreApplication.translate
+        MainWindow.setWindowTitle(_translate("MainWindow", "MainWindow"))
+        self.label.setText(_translate("MainWindow", "文件1"))
+        self.pushButton1.setText(_translate("MainWindow", "选择文件"))
+        self.label_2.setText(_translate("MainWindow", "文件2"))
+        self.pushButton2.setText(_translate("MainWindow", "选择文件"))
+        self.label_3.setText(_translate("MainWindow", "文件3"))
+        self.pushButton3.setText(_translate("MainWindow", "选择文件"))
+        self.label_4.setText(_translate("MainWindow", "文件4"))
+        self.pushButton4.setText(_translate("MainWindow", "选择文件"))
+        self.pushButton5.setText(_translate("MainWindow", "计算距离"))
+    def get_file_path(self):
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName()
+        button = self.sender()
+        if button == self.pushButton1:
+            self.lineEdit1.setText(file_path)
+            self.file_paths[0] = file_path
+        elif button == self.pushButton2:
+            self.lineEdit2.setText(file_path)
+            self.file_paths[1] = file_path
+        elif button == self.pushButton3:
+            self.lineEdit3.setText(file_path)
+            self.file_paths[2] = file_path
+        elif button == self.pushButton4:
+            self.lineEdit4.setText(file_path)
+            self.file_paths[3] = file_path
+    def count_chars_pdf(self, file_path):
+        with open(file_path, 'rb') as f:
+            pdf_reader = PyPDF2.PdfFileReader(f)
+            total_chars = 0
+            for page_num in range(pdf_reader.getNumPages()):
+                page = pdf_reader.getPage(page_num)
+                text = page.extractText()
+                total_chars += len(text)
+        return total_chars
 
-    def load_file2(self):
-        """
-        加载文件2的按钮点击事件。
-        """
-        filepath, _ = QtWidgets.QFileDialog.getOpenFileName(None, "选择文件", "", "PDF Files (*.pdf);;Word Files (*.docx);;Text Files (*.txt)")
-        self.lineEdit2.setText(filepath)
+    def count_chars_docx(self, file_path):
+        doc = docx.Document(file_path)
+        full_text = []
+        for para in doc.paragraphs:
+            full_text.append(para.text)
+        return len(''.join(full_text))
 
-    def load_file3(self):
-        """
-        加载文件3的按钮点击事件。
-        """
-        filepath, _ = QtWidgets.QFileDialog.getOpenFileName(None, "选择文件", "", "PDF Files (*.pdf);;Word Files (*.docx);;Text Files (*.txt)")
-        self.lineEdit3.setText(filepath)
+    def count_chars_txt(self, file_path):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+        return len(text)
 
-    def load_file4(self):
-        """
-        加载文件4的按钮点击事件。
-        """
-        filepath, _ = QtWidgets.QFileDialog.getOpenFileName(None, "选择文件", "", "PDF Files (*.pdf);;Word Files (*.docx);;Text Files (*.txt)")
-        self.lineEdit4.setText(filepath)
+    def compute_distance(self, file_paths):
+        # 计算每个文件的总字符数
+        for file_path in file_paths:
+            if file_path is not None:
+                file_type = os.path.splitext(file_path)[-1].lower()
+                if file_type == ".pdf":
+                    total_chars = self.count_chars_pdf(file_path)
+                elif file_type == ".doc" or file_type == ".docx":
+                    total_chars = self.count_chars_docx(file_path)
+                elif file_type == ".txt":
+                    total_chars = self.count_chars_txt(file_path)
+                else:
+                    total_chars = 0
+                self.total_chars[file_path] = total_chars
 
+        # 分块读取和计算距离
+        distances = []
+        for i in range(len(file_paths)):
+            if file_paths[i] is None:
+                continue
+            for j in range(i+1, len(file_paths)):
+                if file_paths[j] is None:
+                    continue
+                distance = 0
+                with open(file_paths[i], 'rb') as f1, open(file_paths[j], 'rb') as f2:
+                    while True:
+                        block1 = f1.read(self.block_size)
+                        block2 = f2.read(self.block_size)
+                        if not block1 or not block2:
+                            break
+                        freq1 = np.zeros((256,), dtype=int)
+                        freq2 = np.zeros((256,), dtype=int)
+                        np.add.at(freq1, np.frombuffer(block1, dtype=np.uint8), 1)
+                        np.add.at(freq2, np.frombuffer(block2, dtype=np.uint8), 1)
+                        freq1 /= self.total_chars[file_paths[i]]
+                        freq2 /= self.total_chars[file_paths[j]]
+                        diff = freq1 - freq2
+                        distance += np.sum(diff**2)
+                distances.append(distance)
+        return distances
     def compute_and_display_distance(self):
-        """
-        计算并显示文件之间的距离。
-        """
-        # 获取所有文件的路径
-        filepath1 = self.lineEdit1.text()
-        filepath2 = self.lineEdit2.text()
-        filepath3 = self.lineEdit3.text()
-        filepath4 = self.lineEdit4.text()
-
-        # 检查文件是否已经选择
-        if not filepath1 or not filepath2:
-            QtWidgets.QMessageBox.warning(None, "警告", "请至少选择两个文件。")
-            return
-
-        # 使用多进程加载文件并计算距离
-        pool = Pool()
-        manager = Manager()
-        distances = manager.list()
-
-        # 读取文件1的内容并计算其它所有文件与其的距离
-        if filepath1:
-            charset = "utf-8"
-            if os.path.splitext(filepath1)[1].lower() == ".docx":
-                charset = "gbk"
-            process1 = pool.apply_async(self.load_text, (filepath1, charset))
-            if filepath2:
-                process2 = pool.apply_async(self.compute_distance, (process1.get(), self.load_text(filepath2, charset)))
-                distances.append(process2)
-            if filepath3:
-                process3 = pool.apply_async(self.compute_distance, (process1.get(), self.load_text(filepath3, charset)))
-                distances.append(process3)
-            if filepath4:
-                process4 = pool.apply_async(self.compute_distance, (process1.get(), self.load_text(filepath4, charset)))
-                distances.append(process4)
-
-        # 读取文件2的内容并计算其它所有文件与其的距离
-        if filepath2:
-            charset = "utf-8"
-            if os.path.splitext(filepath2)[1].lower() == ".docx":
-                charset = "gbk"
-            process2 = pool.apply_async(self.load_text, (filepath2, charset))
-            if filepath3:
-                process3 = pool.apply_async(self.compute_distance, (process2.get(), self.load_text(filepath3, charset)))
-                distances.append(process3)
-            if filepath4:
-                process4 = pool.apply_async(self.compute_distance, (process2.get(), self.load_text(filepath4, charset)))
-                distances.append(process4)
-
-        # 读取文件3的内容并计算其与文件4的距离
-        if filepath3 and filepath4:
-            charset = "utf-8"
-            if os.path.splitext(filepath3)[1].lower() == ".docx" or os.path.splitext(filepath4)[1].lower() == ".docx":
-                charset = "gbk"
-            process3 = pool.apply_async(self.load_text, (filepath3, charset))
-            process4 = pool.apply_async(self.load_text, (filepath4, charset))
-            process5 = pool.apply_async(self.compute_distance, (process3.get(), process4.get()))
-            distances.append(process5)
-
-        # 等待所有进程执行完毕并获取结果
-        pool.close()
-        pool.join()
-        # 在文本浏览器中显示计算结果
-        if len(distances) == 2:
-            text1 = os.path.basename(filepath1)
-            text2 = os.path.basename(filepath2)
-            result = "文件1（{}）和文件2（{}）之间的距离为：{:.6f}\n".format(text1, text2, distances[0].get())
-            self.textBrowser.setText(result)
-        elif len(distances) == 3:
-            text1 = os.path.basename(filepath1)
-            text2 = os.path.basename(filepath2)
-            text3 = os.path.basename(filepath3)
-            result = "文件1（{}）和文件2（{}）之间的距离为：{:.6f}\n".format(text1, text2, distances[0].get())
-            result += "文件1（{}）和文件3（{}）之间的距离为：{:.6f}\n".format(text1, text3, distances[1].get())
-            result += "文件2（{}）和文件3（{}）之间的距离为：{:.6f}\n".format(text2, text3, distances[2].get())
-            self.textBrowser.setText(result)
-        elif len(distances) == 4:
-            text1 = os.path.basename(filepath1)
-            text2 = os.path.basename(filepath2)
-            text3 = os.path.basename(filepath3)
-            text4 = os.path.basename(filepath4)
-            result = "文件1（{}）和文件2（{}）之间的距离为：{:.6f}\n".format(text1, text2, distances[0].get())
-            result += "文件1（{}）和文件3（{}）之间的距离为：{:.6f}\n".format(text1, text3, distances[1].get())
-            result += "文件1（{}）和文件4（{}）之间的距离为：{:.6f}\n".format(text1, text4, distances[2].get())
-            result += "文件2（{}）和文件3（{}）之间的距离为：{:.6f}\n".format(text2, text3, distances[3].get())
-            result += "文件2（{}）和文件4（{}）之间的距离为：{:.6f}\n".format(text2, text4, distances[4].get())
-            result += "文件3（{}）和文件4（{}）之间的距离为：{:.6f}\n".format(text3, text4, distances[5].get())
-            self.textBrowser.setText(result)
-if __name__ == '__main__':
-    # 创建应用程序对象
+        # 计算距离
+        distances = self.compute_distance(self.file_paths)
+        # 显示结果
+        result = ""
+        for i in range(len(self.file_paths)):
+            if self.file_paths[i] is not None:
+                result += f"{os.path.basename(self.file_paths[i])}: {distances[i]}\n"
+        self.textBrowser.setText(result)
+if __name__ == "__main__":
+    import sys
     app = QtWidgets.QApplication(sys.argv)
-
-    # 创建窗口对象
     MainWindow = QtWidgets.QMainWindow()
-
-    # 创建主窗口UI对象
     ui = Ui_MainWindow()
     ui.setupUi(MainWindow)
-
-    # 显示窗口
     MainWindow.show()
-
-    # 进入应用程序主循环
     sys.exit(app.exec_())
