@@ -1,177 +1,267 @@
 import os
-import PyPDF2
-import docx
-from collections import Counter
-from PyQt5 import QtCore, QtGui, QtWidgets
-import sys
-import textract
-from pdfminer.high_level import extract_text
 import numpy as np
-from multiprocessing import Pool, Manager
-class Ui_MainWindow(object):
-    def setupUi(self, MainWindow):
-        MainWindow.setObjectName("MainWindow")
-        MainWindow.resize(500, 500)
-        self.centralwidget = QtWidgets.QWidget(MainWindow)
-        self.centralwidget.setObjectName("centralwidget")
-        self.label = QtWidgets.QLabel(self.centralwidget)
-        self.label.setGeometry(QtCore.QRect(20, 20, 81, 21))
-        self.label.setObjectName("label")
-        self.lineEdit1 = QtWidgets.QLineEdit(self.centralwidget)
-        self.lineEdit1.setGeometry(QtCore.QRect(110, 20, 261, 21))
-        self.lineEdit1.setObjectName("lineEdit1")
-        self.pushButton1 = QtWidgets.QPushButton(self.centralwidget)
-        self.pushButton1.setGeometry(QtCore.QRect(380, 20, 91, 21))
-        self.pushButton1.setObjectName("pushButton1")
-        self.label_2 = QtWidgets.QLabel(self.centralwidget)
-        self.label_2.setGeometry(QtCore.QRect(20, 60, 81, 21))
-        self.label_2.setObjectName("label_2")
-        self.lineEdit2 = QtWidgets.QLineEdit(self.centralwidget)
-        self.lineEdit2.setGeometry(QtCore.QRect(110, 60, 261, 21))
-        self.lineEdit2.setObjectName("lineEdit2")
-        self.pushButton2 = QtWidgets.QPushButton(self.centralwidget)
-        self.pushButton2.setGeometry(QtCore.QRect(380, 60, 91, 21))
-        self.pushButton2.setObjectName("pushButton2")
-        self.label_3 = QtWidgets.QLabel(self.centralwidget)
-        self.label_3.setGeometry(QtCore.QRect(20, 100, 81, 21))
-        self.label_3.setObjectName("label_3")
-        self.lineEdit3 = QtWidgets.QLineEdit(self.centralwidget)
-        self.lineEdit3.setGeometry(QtCore.QRect(110, 100, 261, 21))
-        self.lineEdit3.setObjectName("lineEdit3")
-        self.pushButton3 = QtWidgets.QPushButton(self.centralwidget)
-        self.pushButton3.setGeometry(QtCore.QRect(380, 100, 91, 21))
-        self.pushButton3.setObjectName("pushButton3")
-        self.label_4 = QtWidgets.QLabel(self.centralwidget)
-        self.label_4.setGeometry(QtCore.QRect(20, 140, 81, 21))
-        self.label_4.setObjectName("label_4")
-        self.lineEdit4 = QtWidgets.QLineEdit(self.centralwidget)
-        self.lineEdit4.setGeometry(QtCore.QRect(110, 140, 261, 21))
-        self.lineEdit4.setObjectName("lineEdit4")
-        self.pushButton4 = QtWidgets.QPushButton(self.centralwidget)
-        self.pushButton4.setGeometry(QtCore.QRect(380, 140, 91, 21))
-        self.pushButton4.setObjectName("pushButton4")
-        self.textBrowser = QtWidgets.QTextBrowser(self.centralwidget)
-        self.textBrowser.setGeometry(QtCore.QRect(20, 200, 451, 251))
-        self.textBrowser.setObjectName("textBrowser")
-        self.pushButton5 = QtWidgets.QPushButton(self.centralwidget)
-        self.pushButton5.setGeometry(QtCore.QRect(200, 170, 91, 21))
-        self.pushButton5.setObjectName("pushButton5")
-        MainWindow.setCentralWidget(self.centralwidget)
+from collections import defaultdict
+from typing import List
+from pdfreader import SimplePDFViewer
+from docx import Document
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import tkinter as tk
+from tkinter import filedialog
 
-        self.retranslateUi(MainWindow)
-        self.file_paths = [None] * 4  # 用于存储用户选择的文件路径
-        self.block_size = 1024 * 1024  # 每个文件块的大小，单位为字节
-        self.total_chars = {}  # 用于存储每个文件的总字符数
-        self.pushButton1.clicked.connect(self.get_file_path)
-        self.pushButton2.clicked.connect(self.get_file_path)
-        self.pushButton3.clicked.connect(self.get_file_path)
-        self.pushButton4.clicked.connect(self.get_file_path)
-        self.pushButton5.clicked.connect(self.compute_and_display_distance)
+CHUNK_SIZE = 10000
+
+class TrieNode:
+    def __init__(self, char: str = ''):
+        self.char = char
+        self.count = 0
+        self.children = {}
+
+    def insert(self, text: str):
+        if not text:
+            return
+
+        node = self
+        for char in text:
+            if char not in node.children:
+                node.children[char] = TrieNode(char)
+
+            node = node.children[char]
+            node.count += 1
+
+    def get_freq_arr(self) -> np.ndarray:
+        freq_arr = np.zeros(256)
+        self._dfs(self, freq_arr, 0)
+        total_count = np.sum(freq_arr)
+        freq_arr /= total_count
+        return freq_arr
+
+    def _dfs(self, node: 'TrieNode', freq_arr: np.ndarray, depth: int):
+        for char, child in node.children.items():
+            freq_arr[ord(char)] = child.count / depth
+            self._dfs(child, freq_arr, depth+1)
 
 
-    def retranslateUi(self, MainWindow):
-        _translate = QtCore.QCoreApplication.translate
-        MainWindow.setWindowTitle(_translate("MainWindow", "MainWindow"))
-        self.label.setText(_translate("MainWindow", "文件1"))
-        self.pushButton1.setText(_translate("MainWindow", "选择文件"))
-        self.label_2.setText(_translate("MainWindow", "文件2"))
-        self.pushButton2.setText(_translate("MainWindow", "选择文件"))
-        self.label_3.setText(_translate("MainWindow", "文件3"))
-        self.pushButton3.setText(_translate("MainWindow", "选择文件"))
-        self.label_4.setText(_translate("MainWindow", "文件4"))
-        self.pushButton4.setText(_translate("MainWindow", "选择文件"))
-        self.pushButton5.setText(_translate("MainWindow", "计算距离"))
-    def get_file_path(self):
-        file_path, _ = QtWidgets.QFileDialog.getOpenFileName()
-        button = self.sender()
-        if button == self.pushButton1:
-            self.lineEdit1.setText(file_path)
-            self.file_paths[0] = file_path
-        elif button == self.pushButton2:
-            self.lineEdit2.setText(file_path)
-            self.file_paths[1] = file_path
-        elif button == self.pushButton3:
-            self.lineEdit3.setText(file_path)
-            self.file_paths[2] = file_path
-        elif button == self.pushButton4:
-            self.lineEdit4.setText(file_path)
-            self.file_paths[3] = file_path
-    def count_chars_pdf(self, file_path):
-        with open(file_path, 'rb') as f:
-            pdf_reader = PyPDF2.PdfFileReader(f)
-            total_chars = 0
-            for page_num in range(pdf_reader.getNumPages()):
-                page = pdf_reader.getPage(page_num)
-                text = page.extractText()
-                total_chars += len(text)
-        return total_chars
+def process_chunk(text: str) -> np.ndarray:
+    trie = TrieNode()
+    trie.insert(text)
+    freq_arr = trie.get_freq_arr()
 
-    def count_chars_docx(self, file_path):
-        doc = docx.Document(file_path)
-        full_text = []
-        for para in doc.paragraphs:
-            full_text.append(para.text)
-        return len(''.join(full_text))
+    return freq_arr
 
-    def count_chars_txt(self, file_path):
-        with open(file_path, 'r', encoding='utf-8') as f:
-            text = f.read()
-        return len(text)
 
-    def compute_distance(self, file_paths):
-        # 计算每个文件的总字符数
-        for file_path in file_paths:
-            if file_path is not None:
-                file_type = os.path.splitext(file_path)[-1].lower()
-                if file_type == ".pdf":
-                    total_chars = self.count_chars_pdf(file_path)
-                elif file_type == ".doc" or file_type == ".docx":
-                    total_chars = self.count_chars_docx(file_path)
-                elif file_type == ".txt":
-                    total_chars = self.count_chars_txt(file_path)
-                else:
-                    total_chars = 0
-                self.total_chars[file_path] = total_chars
+def process_file(filepath: str) -> np.ndarray:
+    """
+    读取文件并返回该文件中每个字符出现的频率
 
-        # 分块读取和计算距离
-        distances = []
-        for i in range(len(file_paths)):
-            if file_paths[i] is None:
-                continue
-            for j in range(i+1, len(file_paths)):
-                if file_paths[j] is None:
-                    continue
-                distance = 0
-                with open(file_paths[i], 'rb') as f1, open(file_paths[j], 'rb') as f2:
-                    while True:
-                        block1 = f1.read(self.block_size)
-                        block2 = f2.read(self.block_size)
-                        if not block1 or not block2:
-                            break
-                        freq1 = np.zeros((256,), dtype=int)
-                        freq2 = np.zeros((256,), dtype=int)
-                        np.add.at(freq1, np.frombuffer(block1, dtype=np.uint8), 1)
-                        np.add.at(freq2, np.frombuffer(block2, dtype=np.uint8), 1)
-                        freq1 /= self.total_chars[file_paths[i]]
-                        freq2 /= self.total_chars[file_paths[j]]
-                        diff = freq1 - freq2
-                        distance += np.sum(diff**2)
-                distances.append(distance)
-        return distances
-    def compute_and_display_distance(self):
-        # 计算距离
-        distances = self.compute_distance(self.file_paths)
-        # 显示结果
-        result = ""
-        for i in range(len(self.file_paths)):
-            if self.file_paths[i] is not None:
-                result += f"{os.path.basename(self.file_paths[i])}: {distances[i]}\n"
-        self.textBrowser.setText(result)
-if __name__ == "__main__":
-    import sys
-    app = QtWidgets.QApplication(sys.argv)
-    MainWindow = QtWidgets.QMainWindow()
-    ui = Ui_MainWindow()
-    ui.setupUi(MainWindow)
-    MainWindow.show()
-    sys.exit(app.exec_())
+    :param filepath: 文件路径
+    :return: 字符频率数组，numpy数组类型
+    """
+    _, ext = os.path.splitext(filepath)
+    if ext == '.pdf':
+        return process_pdf(filepath)
+    elif ext in ['.doc', '.docx']:
+        return process_doc(filepath)
+    elif ext == '.txt':
+        return process_txt(filepath)
+    else:
+        raise ValueError('Unsupported file type')
+
+
+
+def process_pdf(filepath: str) -> np.ndarray:
+    """
+    读取PDF文件并返回该文件中每个字符出现的频率
+
+    :param filepath: PDF文件路径
+    :return: 字符频率数组，numpy数组类型
+    """
+    fd = open(filepath, "rb")
+    viewer = SimplePDFViewer(fd)
+    viewer.render()
+    text = viewer.canvas.text_content
+
+
+    freq_arr = np.zeros(256)
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for i in range(0, len(text), CHUNK_SIZE):
+            chunk = text[i:i+CHUNK_SIZE]
+            future = executor.submit(process_chunk, chunk)
+            futures.append(future)
+
+        for future in as_completed(futures):
+            freq_arr += future.result()
+
+    total_count = np.sum(freq_arr)
+    freq_arr /= total_count
+    return freq_arr
+
+
+def process_doc(filepath: str) -> np.ndarray:
+    """
+    读取DOC或DOCX文件并返回该文件中每个字符出现的频率
+
+    :param filepath: DOC或DOCX文件路径
+    :return: 字符频率数组，numpy数组类型
+    """
+    try:
+        doc = Document(filepath)
+    except Exception as e:
+        print(e)
+        return np.zeros(256)
+
+    text = ''
+    for paragraph in doc.paragraphs:
+        text += paragraph.text
+
+    freq_arr = np.zeros(256)
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for i in range(0, len(text), CHUNK_SIZE):
+            chunk = text[i:i+CHUNK_SIZE]
+            future = executor.submit(process_chunk, chunk)
+            futures.append(future)
+
+        for future in as_completed(futures):
+            freq_arr += future.result()
+
+    total_count = np.sum(freq_arr)
+    freq_arr /= total_count
+    return freq_arr
+
+
+def process_txt(filepath: str) -> np.ndarray:
+    """
+    读取TXT文件并返回该文件中每个字符出现的频率
+
+    :param filepath: TXT文件路径
+    :return: 字符频率数组，numpy数组类型
+    """
+    with open(filepath, 'r', encoding='utf-8') as f:
+        text = f.read()
+
+    freq_arr = np.zeros(256)
+
+    # 将文本分成大小为 CHUNK_SIZE 的块，并使用多线程计算每个块中字符出现的频率
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for i in range(0, len(text), CHUNK_SIZE):
+            chunk = text[i:i+CHUNK_SIZE]
+            future = executor.submit(process_chunk, chunk)
+            futures.append(future)
+
+        # 将所有块的字符频率相加
+        for future in as_completed(futures):
+            freq_arr += future.result()
+
+    # 计算字符频率
+    total_count = np.sum(freq_arr)
+    freq_arr /= total_count
+
+    return freq_arr
+
+
+def get_common_chars(f1_freq: np.ndarray, f2_freq: np.ndarray) -> List[int]:
+    """
+    返回两个文件中共同出现的字符列表
+
+    :param f1_freq: 第一个文件的字符频率数组，numpy数组类型
+    :param f2_freq: 第二个文件的字符频率数组，numpy数组类型
+    :return: 共同出现的字符的ASCII码列表，Python List类型
+    """
+    common_chars = np.where((f1_freq != 0) & (f2_freq != 0))[0]
+
+    return common_chars.tolist()
+
+
+def get_distance(f1_freq: np.ndarray, f2_freq: np.ndarray) -> float:
+    """
+    计算两个文件的距离
+
+    :param f1_freq: 第一个文件的字符频率数组，numpy数组类型
+    :param f2_freq: 第二个文件的字符频率数组，numpy数组类型
+    :return: 两个文件的距离，Python float类型
+    """
+    common_chars = get_common_chars(f1_freq, f2_freq)
+    diff = f1_freq[common_chars] - f2_freq[common_chars]
+    distance = np.sum(diff * diff)
+    diff = f1_freq - f2_freq
+    distance += np.sum(diff[common_chars] * diff[common_chars])
+    return distance
+
+def process_files(filepaths: List[str]) -> np.ndarray:
+    """
+    对多个文件计算距离矩阵
+
+    :param filepaths: 文件路径列表，Python List类型
+    :return: 距离矩阵，numpy数组类型
+    """
+    n = len(filepaths)
+    distances = np.zeros((n, n))
+
+    freqs = []
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(process_file, filepath) for filepath in filepaths]
+
+        for future in as_completed(futures):
+            freqs.append(future.result())
+
+    for i in range(n):
+        for j in range(i+1, n):
+            distances[i][j] = get_distance(freqs[i], freqs[j])
+            distances[j][i] = distances[i][j]
+
+    return distances
+
+class Application(tk.Frame):
+    def __init__(self, master=None):
+        super().__init__(master)
+        self.master = master
+        self.master.title("文件相似度分析")
+        self.filepaths = []
+        self.distances = None
+        self.create_widgets()
+
+    def create_widgets(self):
+        # 添加文件按钮
+        self.add_button = tk.Button(self.master, text="添加文件", command=self.add_file)
+        self.add_button.grid(row=0, column=0, padx=10, pady=10)
+
+        # 删除文件按钮
+        self.del_button = tk.Button(self.master, text="删除文件", command=self.del_file)
+        self.del_button.grid(row=0, column=1, padx=10, pady=10)
+
+        # 计算距离矩阵按钮
+        self.calc_button = tk.Button(self.master, text="计算距离矩阵", command=self.calc_distances)
+        self.calc_button.grid(row=0, column=2, padx=10, pady=10)
+
+        # 文件列表
+        self.file_list = tk.Listbox(self.master, width=50, height=15)
+        self.file_list.grid(row=1, column=0, columnspan=3, padx=10, pady=10)
+
+        # 距离矩阵
+        self.dist_matrix = tk.Label(self.master, text="")
+        self.dist_matrix.grid(row=2, column=0, columnspan=3, padx=10, pady=10)
+
+    def add_file(self):
+        filepath = filedialog.askopenfilename()
+        if filepath and os.path.isfile(filepath):
+            self.filepaths.append(filepath)
+            self.file_list.insert(tk.END, os.path.basename(filepath))
+
+    def del_file(self):
+        selected_items = self.file_list.curselection()
+        for i in reversed(selected_items):
+            self.file_list.delete(i)
+            self.filepaths.pop(i)
+
+    def calc_distances(self):
+        if len(self.filepaths) < 2:
+            return
+        self.distances = process_files(self.filepaths)
+        self.dist_matrix.config(text=str(self.distances))
+
+if __name__ == '__main__':
+    root = tk.Tk()
+    app = Application(master=root)
+    app.mainloop()
